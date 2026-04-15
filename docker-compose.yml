@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  # ── Application ─────────────────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: invoice_detector_api
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql://invoice_user:invoice_pass@db:5432/invoice_detector
+      WHATSAPP_API_URL: https://graph.facebook.com/v18.0
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-invoice_detector_verify_token}
+      LOG_TO_FILE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  # ── Base de données PostgreSQL ───────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: invoice_detector_db
+    environment:
+      POSTGRES_USER: invoice_user
+      POSTGRES_PASSWORD: invoice_pass
+      POSTGRES_DB: invoice_detector
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invoice_user -d invoice_detector"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

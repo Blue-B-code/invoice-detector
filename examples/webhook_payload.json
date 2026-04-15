@@ -1,0 +1,44 @@
+{
+  "_comment": "Exemple de payload webhook WhatsApp Business pour un message document PDF",
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15550000000",
+              "phone_number_id": "PHONE_NUMBER_ID"
+            },
+            "contacts": [
+              {
+                "profile": {
+                  "name": "Jean Dupont"
+                },
+                "wa_id": "33612345678"
+              }
+            ],
+            "messages": [
+              {
+                "from": "33612345678",
+                "id": "wamid.HBgLMzM2MTIzNDU2NzhVAgASABIAmTg5QjI4OTYwM0M3QTRB",
+                "timestamp": "1704067200",
+                "type": "document",
+                "document": {
+                  "caption": "Voici ma facture du mois",
+                  "filename": "facture_janvier_2024.pdf",
+                  "id": "MEDIA_ID_FROM_WHATSAPP",
+                  "mime_type": "application/pdf",
+                  "sha256": "abc123..."
+                }
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}
