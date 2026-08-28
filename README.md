@@ -1,247 +1,201 @@
-# 📄 Invoice Duplicate Detector — WhatsApp
+# 📄 Invoice Duplicate Detector — WhatsApp Business
 
-Système de détection de doublons de factures via WhatsApp Business API.  
-Construit avec **FastAPI**, **SQLAlchemy** et **pdfplumber**.
+Detects duplicate invoices submitted over the **WhatsApp Business API**.
+Built with **FastAPI**, **SQLAlchemy** and **pdfplumber**.
+
+[![Python](https://img.shields.io/badge/Python-3.12-blue)](#)
+[![Framework](https://img.shields.io/badge/Framework-FastAPI-teal)](#)
 
 ---
 
-## 🏗️ Architecture du projet
+## Overview
+
+This service receives invoice PDFs sent through WhatsApp Business, extracts the invoice data, computes a SHA-256 hash of the file, and rejects any document that has already been processed — preventing the same invoice from being used more than once.
+
+## Problem
+
+Paper-based or manual invoice workflows are easy to abuse: a single invoice can be resubmitted multiple times, generating duplicate payments. Detecting duplicates reliably across WhatsApp submissions requires combining:
+
+- file-level fingerprinting (so even a renamed file is caught),
+- business-data extraction (invoice number, amount, date),
+- and database-level integrity (unique constraints).
+
+## Solution
+
+A small, layered FastAPI service that turns WhatsApp media into a duplicate-safe invoice record:
+
+1. WhatsApp user sends a PDF to the business number.
+2. The WhatsApp Business API calls the service's `POST /webhook`.
+3. The service downloads the media, computes a **SHA-256 hash**, and extracts `invoice_id`, `amount` and `date` with pdfplumber.
+4. If the invoice or hash already exists, the message is answered as **duplicate**; otherwise it is stored as **valid**.
+
+## Key features
+
+- **WhatsApp webhook** with Meta verification (GET challenge) and message handling (POST).
+- **Duplicate detection** via `UNIQUE` constraints on both `invoice_id` and `pdf_hash` — safe under concurrent requests.
+- **PDF parsing** supporting several invoice layouts (French and English formats).
+- **Multi-stage Dockerfile** (builder + runtime) and a **docker-compose** stack with PostgreSQL 16.
+- **19 unit tests** covering PDF hashing, parsing, repository constraints and webhook routes.
+- **Config via environment variables** (`.env.example` provided).
+
+## Architecture
 
 ```
 invoice-detector/
 ├── app/
-│   ├── main.py                        # Point d'entrée FastAPI
-│   ├── config.py                      # Configuration (variables d'env)
-│   ├── database.py                    # Moteur SQLAlchemy & session
-│   ├── schemas.py                     # Schémas Pydantic (validation)
+│   ├── main.py                 # FastAPI entry point, lifespan, CORS, routers
+│   ├── config.py               # Environment-driven settings (pydantic-settings)
+│   ├── database.py             # SQLAlchemy engine & session
+│   ├── schemas.py              # Pydantic validation schemas
 │   ├── models/
-│   │   └── invoice.py                 # Modèle SQLAlchemy Invoice
+│   │   └── invoice.py          # SQLAlchemy Invoice model
 │   ├── repositories/
-│   │   └── invoice_repository.py      # Couche d'accès aux données
+│   │   └── invoice_repository.py  # Data access layer
 │   ├── services/
-│   │   └── invoice_service.py         # Logique métier (orchestration)
+│   │   └── invoice_service.py  # Business orchestration
 │   ├── routes/
-│   │   ├── webhook.py                 # Endpoints /webhook (GET + POST)
-│   │   └── health.py                  # /health + /invoices
+│   │   ├── webhook.py          # GET/POST /webhook
+│   │   └── health.py           # /health + /invoices
 │   └── utils/
-│       ├── pdf_utils.py               # Hash SHA-256 + extraction PDF
-│       └── whatsapp_client.py         # Client WhatsApp Business API
-├── tests/
-│   └── test_invoice_system.py         # Tests unitaires complets
-├── scripts/
-│   └── test_webhook.sh                # Script de test cURL
-├── examples/
-│   └── webhook_payload_example.json   # Exemple de payload WhatsApp
-├── Dockerfile
-├── docker-compose.yml
+│       ├── pdf_utils.py        # SHA-256 hash + PDF data extraction
+│       └── whatsapp_client.py  # WhatsApp Business API client
+├── app/tests/test_invoice_system.py  # 19 unit tests (pytest)
+├── scripts/test_webhook.sh     # Manual curl test script
+├── examples/webhook_payload_example.json
+├── Dockerfile                  # Multi-stage build
+├── docker-compose.yml          # API + PostgreSQL 16
 ├── requirements.txt
 ├── pyproject.toml
-├── .env.example
-└── README.md
+└── .env.example
 ```
 
----
-
-## 🔁 Workflow fonctionnel
+## Workflow
 
 ```
 WhatsApp User
-     │
-     │  1. Envoie une facture PDF
+     │  1. sends an invoice PDF
      ▼
 WhatsApp Business API
-     │
-     │  2. Webhook POST /webhook
+     │  2. POST /webhook
      ▼
 Invoice Detector API
+     ├─ 3. download the PDF (WhatsApp Media API)
+     ├─ 4. compute SHA-256 hash
+     ├─ 5. extract invoice_id, amount, date
+     ├─ 6. check for duplicates (UNIQUE constraints)
      │
-     ├─ 3. Téléchargement du PDF (WhatsApp Media API)
-     ├─ 4. Calcul du hash SHA-256
-     ├─ 5. Extraction des données (invoice_id, montant, date)
-     ├─ 6. Vérification doublon (contrainte UNIQUE en base)
-     │
-     ├─ ✅ Nouvelle facture → Enregistrement + réponse "Facture valide"
-     └─ ❌ Doublon détecté  → Réponse "Facture déjà utilisée"
+     ├─ ✅ new invoice  → stored + "Facture valide" answer
+     └─ ❌ duplicate    → "Facture déjà utilisée" answer
 ```
 
----
+## Tech stack
 
-## ⚙️ Installation
+- **Python 3.12**, **FastAPI**, **SQLAlchemy**, **Pydantic**
+- **pdfplumber** for PDF text extraction
+- **WhatsApp Business API** (Meta Graph API v18)
+- **PostgreSQL 16** (SQLite for local/dev)
+- **pytest** for tests · **Docker / docker-compose**
 
-### Prérequis
+## Testing
+
+```bash
+pip install -r requirements.txt
+pytest -v
+```
+
+19 tests cover PDF hashing (determinism, uniqueness), invoice parsing (full text, missing fields), repository behaviour (duplicate `invoice_id`, duplicate hash) and webhook routes (verification, invalid token, non-document payloads, PDF payload).
+
+## Docker / deployment
+
+```bash
+# Start API + PostgreSQL
+docker-compose up --build
+
+# Background
+docker-compose up -d --build
+
+# Stop
+docker-compose down
+```
+
+### Exposing the webhook locally
+
+```bash
+ngrok http 8000
+```
+
+Copy the generated HTTPS URL into the **Meta for Developers** dashboard as the webhook URL.
+
+## Installation
+
+### Prerequisites
 
 - Python 3.11+
 - pip
 
-### 1. Cloner et configurer
-
 ```bash
-git clone <repo>
+git clone https://github.com/Blue-B-code/invoice-detector.git
 cd invoice-detector
 
-# Créer l'environnement virtuel
 python -m venv .venv
-source .venv/bin/activate          # Linux/macOS
-# .venv\Scripts\activate           # Windows
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-# Installer les dépendances
 pip install -r requirements.txt
-```
-
-### 2. Variables d'environnement
-
-```bash
-cp .env.example .env
-```
-
-Éditer `.env` avec vos valeurs :
-
-| Variable                  | Description                                      | Défaut                              |
-|---------------------------|--------------------------------------------------|-------------------------------------|
-| `APP_ENV`                 | Environnement (`development` / `production`)     | `development`                       |
-| `DATABASE_URL`            | URL de connexion SQLAlchemy                      | `sqlite:///./invoices.db`           |
-| `WHATSAPP_API_URL`        | URL de base de l'API WhatsApp                    | `https://graph.facebook.com/v18.0`  |
-| `WHATSAPP_PHONE_NUMBER_ID`| ID du numéro de téléphone WhatsApp Business      | _(requis en production)_            |
-| `WHATSAPP_ACCESS_TOKEN`   | Token d'accès Meta                               | _(requis en production)_            |
-| `WHATSAPP_VERIFY_TOKEN`   | Token de vérification du webhook                 | `invoice_detector_verify_token`     |
-| `MAX_PDF_SIZE_MB`         | Taille maximale d'un PDF (en Mo)                 | `10`                                |
-| `LOG_TO_FILE`             | Écrire les logs dans `logs/app.log`              | `false`                             |
-
-### 3. Lancer en développement
-
-```bash
-mkdir -p logs
+cp .env.example .env             # then edit with your values
 uvicorn app.main:app --reload --port 8000
 ```
 
-L'API est disponible sur : http://localhost:8000  
-Documentation Swagger : http://localhost:8000/docs
+API: http://localhost:8000 · Swagger docs: http://localhost:8000/docs
 
----
+### Environment variables
 
-## 🐳 Lancement avec Docker
+| Variable | Description | Default |
+| --- | --- | --- |
+| `APP_ENV` | `development` / `production` | `development` |
+| `DATABASE_URL` | SQLAlchemy database URL | `sqlite:///./invoices.db` |
+| `WHATSAPP_API_URL` | WhatsApp Business API base URL | `https://graph.facebook.com/v18.0` |
+| `WHATSAPP_PHONE_NUMBER_ID` | Business phone number ID | *(required in production)* |
+| `WHATSAPP_ACCESS_TOKEN` | Meta access token | *(required in production)* |
+| `WHATSAPP_VERIFY_TOKEN` | Webhook verification token | `invoice_detector_verify_token` |
+| `MAX_PDF_SIZE_MB` | Max PDF size in MB | `10` |
+| `LOG_TO_FILE` | Write logs to `logs/app.log` | `false` |
 
-```bash
-# Lancer l'API + PostgreSQL
-docker-compose up --build
+## Usage
 
-# En arrière-plan
-docker-compose up -d --build
+### Verify the webhook
 
-# Arrêter
-docker-compose down
-```
-
----
-
-## 🗄️ Schéma de base de données
-
-```sql
-CREATE TABLE invoices (
-    id           INTEGER      PRIMARY KEY AUTOINCREMENT,
-    invoice_id   VARCHAR(100) NOT NULL UNIQUE,   -- Identifiant métier
-    amount       NUMERIC(12,2) NOT NULL,          -- Montant
-    invoice_date DATE         NOT NULL,           -- Date de la facture
-    pdf_hash     VARCHAR(64)  NOT NULL UNIQUE,    -- SHA-256 du PDF
-    status       VARCHAR(20)  NOT NULL DEFAULT 'valid',  -- valid | duplicate
-    sender_phone VARCHAR(20),                     -- Numéro WhatsApp expéditeur
-    created_at   TIMESTAMP    NOT NULL DEFAULT now()
-);
-```
-
-Les contraintes `UNIQUE` sur `invoice_id` et `pdf_hash` garantissent l'intégrité
-des données même en cas de requêtes concurrentes.
-
----
-
-## 🧪 Lancer les tests
-
-```bash
-pytest -v
-```
-
-Résultats attendus :
-
-```
-tests/test_invoice_system.py::TestPdfUtils::test_compute_sha256_retourne_64_chars  PASSED
-tests/test_invoice_system.py::TestPdfUtils::test_parse_invoice_data_texte_complet  PASSED
-tests/test_invoice_system.py::TestInvoiceRepository::test_create_nouvelle_facture  PASSED
-tests/test_invoice_system.py::TestInvoiceRepository::test_create_doublon_invoice_id PASSED
-tests/test_invoice_system.py::TestWebhookRoutes::test_verify_webhook_valide        PASSED
-... (15 tests au total)
-```
-
----
-
-## 🔌 Tester le webhook manuellement
-
-### Avec le script bash inclus
-
-```bash
-chmod +x scripts/test_webhook.sh
-bash scripts/test_webhook.sh
-```
-
-### Avec cURL directement
-
-**Vérification du webhook (GET) :**
 ```bash
 curl "http://localhost:8000/webhook?hub.mode=subscribe&hub.verify_token=invoice_detector_verify_token&hub.challenge=test123"
 ```
 
-**Simuler la réception d'une facture PDF (POST) :**
+### Simulate an invoice submission
+
 ```bash
 curl -X POST http://localhost:8000/webhook \
   -H "Content-Type: application/json" \
   -d @examples/webhook_payload_example.json
 ```
 
-**Lister les factures enregistrées :**
+### List stored invoices
+
 ```bash
 curl http://localhost:8000/invoices
 ```
 
----
+## Supported PDF formats
 
-## 🌐 Exposer le webhook localement (ngrok)
+**Invoice number:** `Facture N° : INV-2024-001`, `Invoice #: 12345`, `N° facture : FAC-001`
+**Amount:** `Total : 1 250,00`, `Montant TTC : 500.00`, `Amount Due: 1,234.56`
+**Date:** `15/01/2024`, `2024-01-15`, `15 janvier 2024`, `15 January 2024`
 
-Pour tester avec l'API WhatsApp réelle :
+## Future improvements
 
-```bash
-# Installer ngrok : https://ngrok.com
-ngrok http 8000
-```
+- **Async queue** — Celery/ARQ + Redis for background processing
+- **OCR** — Tesseract for scanned PDFs
+- **Multi-tenant** — support multiple companies
+- **Dashboard** — web UI to browse invoices
+- **Alerts** — email/Slack notification on duplicate detection
 
-Copier l'URL HTTPS générée (ex: `https://abc123.ngrok.io`) et la configurer
-comme URL de webhook dans le tableau de bord Meta for Developers.
+## License
 
----
-
-## 📋 Format des factures PDF supportées
-
-Le parser reconnaît automatiquement les formats suivants :
-
-**Numéro de facture :**
-- `Facture N° : INV-2024-001`
-- `Invoice #: 12345`
-- `N° facture : FAC-001`
-
-**Montant :**
-- `Total : 1 250,00`
-- `Montant TTC : 500.00`
-- `Amount Due: 1,234.56`
-
-**Date :**
-- `15/01/2024` ou `15-01-2024`
-- `2024-01-15`
-- `15 janvier 2024` / `15 January 2024`
-
----
-
-## 🚀 Évolutions possibles
-
-- **File d'attente** : Intégrer Celery + Redis pour traitement asynchrone
-- **OCR** : Ajouter Tesseract pour les PDFs scannés (images)
-- **Multi-tenant** : Support de plusieurs entreprises
-- **Dashboard** : Interface web de consultation des factures
-- **Alertes** : Notifications email/Slack lors de détection de doublons
+MIT
